@@ -2,12 +2,12 @@ package com.securevault.ui;
 
 import com.securevault.config.AppConfig;
 import com.securevault.exception.AccountLockedException;
-import com.securevault.exception.CryptoException;
 import com.securevault.service.Session;
 import com.securevault.service.VaultService;
 import com.securevault.ui.components.FormPanel;
 import com.securevault.ui.components.HeaderPanel;
 import com.securevault.ui.components.PasswordInput;
+import com.securevault.util.AppLogger;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -142,11 +142,10 @@ public class LoginFrame extends BaseFrame {
             return;
         }
         setFormEnabled(true);
-        if (error instanceof CryptoException) {
-            showMessage("The vault file could not be decrypted. It may be damaged.", Theme.DANGER);
-        } else {
-            showMessage(error.getMessage() != null ? error.getMessage() : "Unlock failed", Theme.DANGER);
+        if (!ErrorHandler.isExpected(error)) {
+            AppLogger.error("Unlock failed", error);
         }
+        showMessage("<html>" + ErrorHandler.friendlyMessage(error) + "</html>", Theme.DANGER);
         passwordInput.requestFocusInWindow();
     }
 

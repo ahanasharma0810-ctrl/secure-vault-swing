@@ -4,10 +4,12 @@ import com.securevault.service.AuthService;
 import com.securevault.service.Session;
 import com.securevault.service.VaultService;
 import com.securevault.ui.BackgroundTask;
+import com.securevault.ui.ErrorHandler;
 import com.securevault.ui.Theme;
 import com.securevault.ui.components.FormPanel;
 import com.securevault.ui.components.PasswordInput;
 import com.securevault.ui.components.PasswordStrengthBar;
+import com.securevault.util.AppLogger;
 
 import javax.swing.JButton;
 import javax.swing.JPanel;
@@ -83,7 +85,10 @@ public class ChangePasswordDialog extends BaseDialog {
                 error -> {
                     wipe(current, next, confirm);
                     setWorking(false);
-                    showMessage(error.getMessage());
+                    if (!ErrorHandler.isExpected(error)) {
+                        AppLogger.error("Changing the master password failed", error);
+                    }
+                    showMessage("<html>" + ErrorHandler.friendlyMessage(error) + "</html>");
                 });
     }
 

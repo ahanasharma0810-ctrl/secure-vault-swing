@@ -7,6 +7,7 @@ import com.securevault.ui.components.FormPanel;
 import com.securevault.ui.components.HeaderPanel;
 import com.securevault.ui.components.PasswordInput;
 import com.securevault.ui.components.PasswordStrengthBar;
+import com.securevault.util.AppLogger;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -125,8 +126,11 @@ public class RegisterFrame extends BaseFrame {
                     wipe(password, confirm);
                     setBusy(false);
                     setFormEnabled(true);
+                    if (!ErrorHandler.isExpected(error)) {
+                        AppLogger.error("Registration failed", error);
+                    }
                     messageLabel.setForeground(Theme.DANGER);
-                    messageLabel.setText(error.getMessage() != null ? error.getMessage() : "Could not create the vault");
+                    messageLabel.setText("<html>" + ErrorHandler.friendlyMessage(error) + "</html>");
                 });
     }
 

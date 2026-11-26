@@ -3,19 +3,25 @@ package com.securevault.ui.dialogs;
 import com.securevault.exception.ValidationException;
 import com.securevault.exception.VaultException;
 import com.securevault.model.Credential;
+import com.securevault.model.PasswordStrength;
 import com.securevault.service.VaultService;
+import com.securevault.ui.ErrorHandler;
 import com.securevault.ui.Theme;
 import com.securevault.ui.components.FormPanel;
 import com.securevault.ui.components.PasswordInput;
 import com.securevault.ui.components.PasswordStrengthBar;
+import com.securevault.util.InputValidator;
 
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.Window;
@@ -38,6 +44,7 @@ public class CredentialDialog extends BaseDialog {
     private final PasswordStrengthBar strengthBar = new PasswordStrengthBar();
     private final JComboBox<String> categoryBox;
     private final JTextArea notesArea = new JTextArea(4, 26);
+    private JButton saveButton;
 
     private transient Credential saved;
 
@@ -78,19 +85,54 @@ public class CredentialDialog extends BaseDialog {
         form.addGrowingField("Notes", new JScrollPane(notesArea));
         content.add(form, BorderLayout.CENTER);
 
-        passwordInput.onChange(() -> strengthBar.update(passwordInput.getText()));
-
         JButton cancel = Theme.secondaryButton("Cancel");
         cancel.addActionListener(e -> dispose());
-        JButton save = Theme.primaryButton(existing == null ? "Add" : "Save");
-        save.addActionListener(e -> save());
-        content.add(buttonBar(cancel, save), BorderLayout.SOUTH);
-        getRootPane().setDefaultButton(save);
+        saveButton = Theme.primaryButton(existing == null ? "Add" : "Save");
+        saveButton.addActionListener(e -> save());
+        content.add(buttonBar(cancel, saveButton), BorderLayout.SOUTH);
+        getRootPane().setDefaultButton(saveButton);
+
+        // live validation: Save is only enabled when the required fields are filled
+        passwordInput.onChange(() -> {
+            strengthBar.update(passwordInput.getText());
+            updateSaveState();
+        });
+        DocumentListener listener = new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                updateSaveState();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                updateSaveState();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                updateSaveState();
+            }
+        };
+        websiteField.getDocument().addDocumentListener(listener);
+        usernameField.getDocument().addDocumentListener(listener);
 
         setContentPane(content);
     }
 
+    private void updateSaveState() {
+        boolean ready = !InputValidator.isBlank(websiteField.getText())
+                && !InputValidator.isBlank(usernameField.getText())
+                && !passwordInput.isEmpty();
+        saveButton.setEnabled(ready);
+        if (ready) {
+            showMessage(" ");
+        } else {
+            showNotice("* required fields");
+        }
+    }
+
     private void fillFields() {
+        updateSaveState();
         if (existing == null) {
             categoryBox.setSelectedItem(Credential.DEFAULT_CATEGORY);
             return;
@@ -118,6 +160,10 @@ public class CredentialDialog extends BaseDialog {
         String password = passwordInput.getText();
         Object category = categoryBox.getEditor().getItem();
         String notes = notesArea.getText();
+
+        if (!confirmPasswordChoice(password)) {
+            return;
+        }
         try {
             if (existing == null) {
                 saved = vault.add(website, username, password, String.valueOf(category), notes);
@@ -128,8 +174,28 @@ public class CredentialDialog extends BaseDialog {
         } catch (ValidationException e) {
             showMessage(e.getMessage());
         } catch (VaultException e) {
-            showMessage("Could not save: " + e.getMessage());
+            ErrorHandler.show(this, "Save", e);
         }
+    }
+
+    /** Warns about very weak or reused passwords. Returns false if the user wants to change it. */
+    private boolean confirmPasswordChoice(String password) {
+        boolean unchanged = existing != null && existing.getPassword().equals(password);
+        if (unchanged) {
+            return true;   // do not nag about a password that was already saved
+        }
+        if (strengthBar.getStrength() == PasswordStrength.VERY_WEAK && !ask(
+                "This password is very weak and easy to guess.\nSave it anyway?")) {
+            return false;
+        }
+        int reused = vault.countPasswordReuse(password, existing == null ? null : existing.getId());
+        return reused == 0 || ask("This password is already used for " + reused + " other "
+                + (reused == 1 ? "entry" : "entries") + ".\nReusing passwords is risky. Save it anyway?");
+    }
+
+    private boolean ask(String question) {
+        return JOptionPane.showConfirmDialog(this, question, "Password warning",
+                JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.YES_OPTION;
     }
 
     /** The saved credential, or null if cancelled. */
