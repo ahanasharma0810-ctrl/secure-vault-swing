@@ -10,7 +10,10 @@ with **AES-256** using a key derived from a single master password.
 
 - **Master account**: register once, then unlock with your master password
 - **Lock-out protection**: 3 wrong attempts block login for 30 seconds
-- **Manage credentials**: add, edit, delete, search and filter by category
+- **Clean dashboard**: every password is a card with a coloured site icon and a one-click **Copy password** button
+- **Category chips**: filter with one click (All, Email, Social, Banking, ...)
+- **Security check**: a banner tells you about weak or reused passwords; **Review** shows just those
+- **Manage credentials**: add, edit, delete, search, show a password, open the website
 - **Password generator**: choose length and character types, avoid look-alike characters
 - **Strength meter**: live feedback while typing a password
 - **Warnings** for very weak or reused passwords
@@ -18,7 +21,11 @@ with **AES-256** using a key derived from a single master password.
 - **Auto-lock**: the vault locks after 5 minutes without activity
 - **Change master password**: the whole vault is re-encrypted with the new key
 - **Automatic backup**: a damaged vault file is restored from the last good copy
-- **Keyboard shortcuts**, right-click menu and double-click to edit
+- **Keyboard shortcuts**, arrow-key navigation, right-click menu and double-click to edit
+
+| Card menu | Security review |
+|---|---|
+| ![Card menu](docs/screenshots/dashboard-menu.png) | ![Security review](docs/screenshots/security-review.png) |
 
 | Login | Add entry | Password generator |
 |---|---|---|
@@ -57,10 +64,12 @@ Open the folder in IntelliJ IDEA, Eclipse or NetBeans as a Maven project and run
 ## Using the app
 
 1. On first start, create your master account (username + strong master password).
-2. Click **+ Add** to save a login. Use **Generate** for a strong random password.
-3. Select a row to **Edit**, **Delete**, **Copy Username** or **Copy Password**.
-4. Type in the search box or pick a category to filter the list.
-5. Click **Lock Vault** (or press `Ctrl+L`) when you step away.
+2. Click **+ Add Password** to save a login. Use **Generate** for a strong random password.
+3. Click **Copy password** on a card to paste it into a website. The clipboard clears itself after 15 seconds.
+4. Use the **⋮** button on a card to copy the username, show the password, open the website, edit or delete.
+5. Type in the search box or click a category chip to filter the list.
+6. If the orange banner appears, click **Review** to see weak or reused passwords and change them.
+7. Click **Lock Vault** (or press `Ctrl+L`) when you step away.
 
 > **The master password cannot be recovered.** Without it, the vault cannot be decrypted.
 
@@ -72,9 +81,10 @@ Open the folder in IntelliJ IDEA, Eclipse or NetBeans as a Maven project and run
 | `Ctrl+E` / `Enter` | Edit selected entry |
 | `Delete` | Delete selected entry |
 | `Ctrl+B` | Copy username |
-| `Ctrl+C` (in table) / `Ctrl+Shift+C` | Copy password |
+| `Ctrl+C` (in list) / `Ctrl+Shift+C` | Copy password |
 | `Ctrl+F` | Search |
 | `Esc` (in search) | Clear search |
+| `↓` (in search), `↑` / `↓` (in list) | Move through the list |
 | `Ctrl+G` | Password generator |
 | `Ctrl+L` | Lock vault |
 | `Ctrl+Q` | Exit |
@@ -113,7 +123,8 @@ To start over, close the app and delete this folder.
 | **Inheritance** | `Credential`/`User` extend `BaseEntity`; frames extend `BaseFrame`; dialogs extend `BaseDialog`; exceptions extend `VaultException` |
 | **Polymorphism** | `AESEncryptionService` and `FileStorageService` are used through their interfaces; `getDisplayName()` is overridden; one `Action` drives a button, a menu item and a shortcut |
 | **Composition** | `VaultService` *has a* `StorageService` and an `EncryptionService` |
-| **Custom components** | `PasswordStrengthBar`, `PasswordInput`, `SearchField`, `HeaderPanel` |
+| **Custom components** | `CredentialCard`, `SiteAvatar`, `FilterChip`, `Tag`, `SecurityBanner`, `PasswordStrengthBar`, `PasswordInput`, `SearchField`, `HeaderPanel` |
+| **Interfaces for callbacks** | `CredentialCard.Listener` lets a card tell the dashboard what happened without knowing about it |
 
 ### Class overview
 
@@ -171,7 +182,8 @@ src/main/java/com/securevault/
  ├── security/                 PasswordHasher, AESEncryptionService,
  │                             PasswordGenerator, PasswordStrengthChecker
  ├── storage/                  StorageService, FileStorageService, CredentialSerializer
- ├── service/                  AuthService, VaultService, Session
+ ├── service/                  AuthService, VaultService, Session,
+ │                             SecurityAnalyzer, SecurityReport
  ├── util/                     ClipboardManager, InputValidator, AppLogger
  └── ui/                       AppController, frames, dialogs, components
 src/test/java/                 JUnit 5 tests
@@ -183,8 +195,8 @@ src/test/java/                 JUnit 5 tests
 mvn test
 ```
 
-95 JUnit tests cover the models, hashing, encryption, the password generator,
-file storage, login and lock-out, vault operations and backup recovery.
+103 JUnit tests cover the models, hashing, encryption, the password generator,
+file storage, login and lock-out, vault operations, backup recovery and the security check.
 
 ## Development branches
 
@@ -201,3 +213,4 @@ file storage, login and lock-out, vault operations and backup recovery.
 | `error-handling-validation` | Friendly errors, logging, input checks, backup recovery |
 | `unit-tests` | JUnit test suite |
 | `packaging-release` | Build scripts, runnable JAR, documentation |
+| `dashboard` | Card-based dashboard, category chips, security check banner |

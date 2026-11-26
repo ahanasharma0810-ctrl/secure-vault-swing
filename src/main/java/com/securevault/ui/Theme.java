@@ -38,6 +38,21 @@ public final class Theme {
     public static final Color DANGER = new Color(220, 38, 38);
     public static final Color SUCCESS = new Color(22, 163, 74);
     public static final Color ROW_ALT = new Color(248, 250, 252);
+    public static final Color PRIMARY_LIGHT = new Color(239, 246, 255);
+    public static final Color HOVER = new Color(248, 250, 252);
+    public static final Color WARNING = new Color(180, 83, 9);
+    public static final Color WARNING_BG = new Color(255, 247, 237);
+    public static final Color WARNING_BORDER = new Color(253, 186, 116);
+    public static final Color SUCCESS_BG = new Color(240, 253, 244);
+    public static final Color SUCCESS_BORDER = new Color(134, 239, 172);
+    public static final Color CHIP_BG = new Color(241, 245, 249);
+
+    /** Colours for the letter icons of websites. */
+    public static final Color[] AVATAR_COLORS = {
+            new Color(37, 99, 235), new Color(22, 163, 74), new Color(219, 39, 119),
+            new Color(234, 88, 12), new Color(124, 58, 237), new Color(13, 148, 136),
+            new Color(202, 138, 4), new Color(225, 29, 72), new Color(71, 85, 105)
+    };
 
     // ---------- Fonts ----------
     public static final Font TITLE = new Font(Font.SANS_SERIF, Font.BOLD, 22);
@@ -45,6 +60,7 @@ public final class Theme {
     public static final Font BODY = new Font(Font.SANS_SERIF, Font.PLAIN, 13);
     public static final Font SMALL = new Font(Font.SANS_SERIF, Font.PLAIN, 12);
     public static final Font MONO = new Font(Font.MONOSPACED, Font.PLAIN, 14);
+    public static final Font CARD_TITLE = new Font(Font.SANS_SERIF, Font.BOLD, 15);
 
     /** Applies the Nimbus look and feel with our colours. Call once at start-up. */
     public static void install() {

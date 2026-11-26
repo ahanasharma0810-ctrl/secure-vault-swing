@@ -43,6 +43,24 @@ public final class InputValidator {
         return clean.toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Turns a saved website into an address the browser can open,
+     * or returns null if it is just an app name (like "Bank App").
+     */
+    public static String toWebAddress(String website) {
+        if (isBlank(website)) {
+            return null;
+        }
+        String w = website.trim();
+        if (w.contains(" ") || !w.contains(".")) {
+            return null;
+        }
+        if (w.toLowerCase(Locale.ROOT).startsWith("http://") || w.toLowerCase(Locale.ROOT).startsWith("https://")) {
+            return w;
+        }
+        return "https://" + w;
+    }
+
     /** Removes control characters (e.g. pasted tabs/new lines) from single-line fields. */
     public static String singleLine(String value) {
         return value == null ? null : value.replaceAll("[\\p{Cntrl}]", "").trim();

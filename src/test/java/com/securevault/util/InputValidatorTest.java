@@ -30,6 +30,15 @@ class InputValidatorTest {
     }
 
     @Test
+    void buildsWebAddresses() {
+        assertEquals("https://gmail.com", InputValidator.toWebAddress("gmail.com"));
+        assertEquals("http://example.org", InputValidator.toWebAddress("http://example.org"));
+        assertNull(InputValidator.toWebAddress("Bank App"));
+        assertNull(InputValidator.toWebAddress("Netflix"));
+        assertNull(InputValidator.toWebAddress(" "));
+    }
+
+    @Test
     void removesControlCharacters() {
         assertEquals("demo_user", InputValidator.singleLine("\tdemo_user\n"));
     }
