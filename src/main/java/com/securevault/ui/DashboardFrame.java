@@ -3,99 +3,105 @@ package com.securevault.ui;
 import com.securevault.config.AppConfig;
 import com.securevault.exception.VaultException;
 import com.securevault.model.Credential;
+import com.securevault.service.SecurityAnalyzer;
+import com.securevault.service.SecurityReport;
 import com.securevault.service.Session;
 import com.securevault.service.VaultService;
+import com.securevault.ui.components.CredentialCard;
+import com.securevault.ui.components.FilterChip;
 import com.securevault.ui.components.HeaderPanel;
 import com.securevault.ui.components.SearchField;
+import com.securevault.ui.components.SecurityBanner;
+import com.securevault.ui.components.VerticalListPanel;
 import com.securevault.ui.dialogs.ChangePasswordDialog;
 import com.securevault.ui.dialogs.CredentialDialog;
 import com.securevault.ui.dialogs.PasswordGeneratorDialog;
 import com.securevault.util.ClipboardManager;
+import com.securevault.util.InputValidator;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
-import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
-import javax.swing.JPopupMenu;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
-import javax.swing.JTable;
-import javax.swing.JToggleButton;
 import javax.swing.KeyStroke;
-import javax.swing.ListSelectionModel;
-import javax.swing.RowFilter;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
-import javax.swing.table.DefaultTableCellRenderer;
-import javax.swing.table.TableCellRenderer;
-import javax.swing.table.TableRowSorter;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.GridBagLayout;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
-import java.time.LocalDateTime;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
- * Main window shown after unlocking: a searchable table of all saved
- * credentials with buttons and menus to add, edit, delete and copy them.
+ * Main window shown after unlocking.
+ *
+ * Layout (top to bottom):
+ *   header with the user name and a Lock button
+ *   search box + "Add Password" button
+ *   category chips (All, Email, Social, ...)
+ *   security banner (weak / reused passwords)
+ *   list of password cards
+ *   status bar
  */
 public class DashboardFrame extends BaseFrame {
 
     private static final long serialVersionUID = 1L;
-    private static final String ALL_CATEGORIES = "All categories";
-    private static final String CARD_TABLE = "table";
-    private static final String CARD_EMPTY = "empty";
+    private static final String ALL = "All";
+    private static final String VIEW_LIST = "list";
+    private static final String VIEW_EMPTY = "empty";
+    private static final String VIEW_NO_RESULTS = "noResults";
 
     protected transient Session session;
     protected final transient VaultService vault;
+    private final transient SecurityAnalyzer analyzer = new SecurityAnalyzer();
+    private transient SecurityReport report;
 
-    protected final CredentialTableModel tableModel = new CredentialTableModel();
-    protected final JTable table = new JTable(tableModel) {
-        private static final long serialVersionUID = 1L;
-
-        /** Zebra stripes for easier reading. */
-        @Override
-        public Component prepareRenderer(TableCellRenderer renderer, int row, int column) {
-            Component c = super.prepareRenderer(renderer, row, column);
-            if (!isRowSelected(row)) {
-                c.setBackground(row % 2 == 0 ? Theme.SURFACE : Theme.ROW_ALT);
-                c.setForeground(Theme.TEXT);
-            }
-            return c;
-        }
-    };
-    private final TableRowSorter<CredentialTableModel> sorter = new TableRowSorter<>(tableModel);
-    protected final SearchField searchField = new SearchField("Search website, username, category or notes...", 24);
-    private final JComboBox<String> categoryFilter = new JComboBox<>();
-    private final JToggleButton revealToggle = new JToggleButton("Show Passwords");
     private final HeaderPanel header;
-    private final JPanel centerCards = new JPanel(new CardLayout());
+    protected final SearchField searchField = new SearchField("Search passwords...", 24);
+    private final JPanel chipsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+    private final SecurityBanner banner = new SecurityBanner(this::toggleReview);
+    private final VerticalListPanel listPanel = new VerticalListPanel();
+    private final JPanel views = new JPanel(new CardLayout());
     private final JLabel countLabel = Theme.label("", Theme.SMALL, Theme.MUTED);
     private final JLabel statusLabel = Theme.label(" ", Theme.SMALL, Theme.SUCCESS);
     private final Timer statusResetTimer = new Timer(4000, e -> setStatus(" ", Theme.SUCCESS));
     private final transient ClipboardManager clipboard = new ClipboardManager();
     private final transient AutoLockManager autoLock;
 
-    // ---------- Actions (shared by buttons and menus) ----------
-    protected final Action addAction = action("Add", e -> addEntry());
+    private final List<CredentialCard> cards = new ArrayList<>();
+    private String selectedId;
+    private String categoryFilter = ALL;
+    private boolean reviewing = false;
+
+    // ---------- Actions (shared by buttons, menus and shortcuts) ----------
+    protected final Action addAction = action("Add Password", e -> addEntry());
     protected final Action editAction = action("Edit", e -> editSelected());
     protected final Action deleteAction = action("Delete", e -> deleteSelected());
     protected final Action copyUserAction = action("Copy Username", e -> copySelected(false));
@@ -108,28 +114,28 @@ public class DashboardFrame extends BaseFrame {
     protected final Action focusSearchAction = action("Find", e -> searchField.requestFocusInWindow());
 
     public DashboardFrame(AppController controller, Session session, VaultService vault) {
-        super(controller, "Vault");
+        super(controller, "My Passwords");
         this.session = session;
         this.vault = vault;
-        this.header = new HeaderPanel(AppConfig.APP_NAME, "");
+        this.header = new HeaderPanel(AppConfig.APP_NAME, "Signed in as " + session.getUser().getUsername());
         this.autoLock = new AutoLockManager(AppConfig.AUTO_LOCK_MINUTES, this::autoLockNow);
         statusResetTimer.setRepeats(false);
 
         buildUI();
         setJMenuBar(buildMenuBar());
         installEventHandlers();
-        refreshTable(null);
-        finishSetup(new Dimension(960, 600));
+        refresh(null);
+        finishSetup(new Dimension(900, 640));
         autoLock.start();
 
         if (vault.wasRecoveredFromBackup()) {
-            javax.swing.SwingUtilities.invokeLater(() -> showInfo(
+            SwingUtilities.invokeLater(() -> showInfo(
                     "Your vault file was damaged, so it was restored from the automatic backup.\n"
                     + "Changes made after the last successful save may be missing."));
         }
     }
 
-    private static Action action(String name, java.util.function.Consumer<ActionEvent> handler) {
+    private static Action action(String name, Consumer<ActionEvent> handler) {
         return new AbstractAction(name) {
             private static final long serialVersionUID = 1L;
 
@@ -153,109 +159,124 @@ public class DashboardFrame extends BaseFrame {
         header.setRightComponent(lockButton);
         add(header, BorderLayout.NORTH);
 
-        JPanel body = new JPanel(new BorderLayout(0, 10));
+        JPanel body = new JPanel(new BorderLayout(0, 12));
         body.setOpaque(false);
-        body.setBorder(Theme.padding(14, 16, 8, 16));
-        body.add(buildToolbar(), BorderLayout.NORTH);
+        body.setBorder(Theme.padding(16, 20, 12, 20));
+        body.add(buildTopSection(), BorderLayout.NORTH);
 
-        configureTable();
-        JScrollPane scroll = new JScrollPane(table);
+        listPanel.setBackground(Theme.SURFACE);
+        listPanel.setFocusable(true);
+        JScrollPane scroll = new JScrollPane(listPanel);
         scroll.setBorder(BorderFactory.createLineBorder(Theme.BORDER));
         scroll.getViewport().setBackground(Theme.SURFACE);
-        centerCards.add(scroll, CARD_TABLE);
-        centerCards.add(buildEmptyState(), CARD_EMPTY);
-        body.add(centerCards, BorderLayout.CENTER);
+        scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+
+        views.setOpaque(false);
+        views.add(scroll, VIEW_LIST);
+        views.add(buildEmptyState(), VIEW_EMPTY);
+        views.add(buildNoResultsState(), VIEW_NO_RESULTS);
+        body.add(views, BorderLayout.CENTER);
         add(body, BorderLayout.CENTER);
 
         JPanel statusBar = new JPanel(new BorderLayout());
         statusBar.setBackground(Theme.SURFACE);
         statusBar.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.BORDER), Theme.padding(6, 16, 6, 16)));
+                BorderFactory.createMatteBorder(1, 0, 0, 0, Theme.BORDER), Theme.padding(6, 20, 6, 20)));
         statusBar.add(statusLabel, BorderLayout.CENTER);
         statusBar.add(countLabel, BorderLayout.EAST);
         add(statusBar, BorderLayout.SOUTH);
     }
 
-    private JComponent buildToolbar() {
-        JPanel toolbar = new JPanel(new BorderLayout(10, 0));
-        toolbar.setOpaque(false);
+    private JComponent buildTopSection() {
+        JPanel top = new JPanel();
+        top.setOpaque(false);
+        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
 
-        JPanel filters = new JPanel(new BorderLayout(8, 0));
-        filters.setOpaque(false);
-        searchField.onChange(this::applyFilter);
-        filters.add(searchField, BorderLayout.CENTER);
-        categoryFilter.addActionListener(e -> applyFilter());
-        categoryFilter.setPrototypeDisplayValue("Entertainment....");
-        filters.add(categoryFilter, BorderLayout.EAST);
-        toolbar.add(filters, BorderLayout.CENTER);
+        // Row 1: search + add button
+        JPanel searchRow = new JPanel(new BorderLayout(10, 0));
+        searchRow.setOpaque(false);
+        searchField.setFont(Theme.BODY.deriveFont(14f));
+        searchField.setPreferredSize(new Dimension(200, 38));
+        searchField.setToolTipText("Search by website, username, category or notes (Ctrl+F)");
+        searchField.onChange(this::renderList);
+        searchRow.add(searchField, BorderLayout.CENTER);
+        searchRow.add(addButton(), BorderLayout.EAST);
+        searchRow.setAlignmentX(LEFT_ALIGNMENT);
+        top.add(searchRow);
+        top.add(Box.createVerticalStrut(12));
 
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
-        buttons.setOpaque(false);
-        JButton addButton = Theme.primaryButton("+ Add");
-        addButton.setAction(addAction);
-        addButton.setText("+ Add");
-        buttons.add(addButton);
-        buttons.add(new JButton(editAction));
-        buttons.add(new JButton(deleteAction));
-        buttons.add(new JButton(copyUserAction));
-        buttons.add(new JButton(copyPasswordAction));
-        revealToggle.addActionListener(e -> {
-            tableModel.setShowPasswords(revealToggle.isSelected());
-            revealToggle.setText(revealToggle.isSelected() ? "Hide Passwords" : "Show Passwords");
-        });
-        buttons.add(revealToggle);
-        JButton generatorButton = new JButton(generatorAction);
-        generatorButton.setText("Generator");
-        buttons.add(generatorButton);
-        toolbar.add(buttons, BorderLayout.EAST);
-        return toolbar;
+        // Row 2: category chips
+        chipsRow.setOpaque(false);
+        chipsRow.setBorder(Theme.padding(0, -8, 0, 0));
+        chipsRow.setAlignmentX(LEFT_ALIGNMENT);
+        top.add(chipsRow);
+        top.add(Box.createVerticalStrut(12));
+
+        // Row 3: security banner
+        banner.setAlignmentX(LEFT_ALIGNMENT);
+        top.add(banner);
+        return top;
     }
 
-    private void configureTable() {
-        table.setRowSorter(sorter);
-        table.setRowHeight(30);
-        table.setFillsViewportHeight(true);
-        table.setShowVerticalLines(false);
-        table.setGridColor(Theme.BORDER);
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        table.getTableHeader().setReorderingAllowed(false);
-        table.getTableHeader().setFont(Theme.BODY.deriveFont(Font.BOLD));
-        table.getSelectionModel().addListSelectionListener(e -> updateActionStates());
-
-        table.setDefaultRenderer(String.class, new PaddedRenderer());
-
-        DefaultTableCellRenderer dateRenderer = new PaddedRenderer() {
-            private static final long serialVersionUID = 1L;
-
-            @Override
-            protected void setValue(Object value) {
-                super.setValue(CredentialTableModel.formatDate((LocalDateTime) value));
-            }
-        };
-        table.setDefaultRenderer(LocalDateTime.class, dateRenderer);
-
-        PaddedRenderer passwordRenderer = new PaddedRenderer(Theme.MONO);
-        table.getColumnModel().getColumn(CredentialTableModel.COL_PASSWORD).setCellRenderer(passwordRenderer);
-
-        int[] widths = {200, 220, 170, 120, 150};
-        for (int i = 0; i < widths.length; i++) {
-            table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
-        }
+    private JButton addButton() {
+        JButton button = Theme.primaryButton("+ Add Password");
+        button.addActionListener(addAction);
+        button.setFont(Theme.BODY.deriveFont(Font.BOLD, 14f));
+        button.setPreferredSize(new Dimension(170, 38));
+        button.setFocusable(false);
+        return button;
     }
 
     private JComponent buildEmptyState() {
-        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        JPanel panel = new JPanel(new GridBagLayout());
         panel.setBackground(Theme.SURFACE);
         panel.setBorder(BorderFactory.createLineBorder(Theme.BORDER));
-        JLabel title = Theme.label("Your vault is empty", Theme.HEADING, Theme.TEXT);
-        title.setHorizontalAlignment(SwingConstants.CENTER);
-        title.setVerticalAlignment(SwingConstants.BOTTOM);
-        JLabel hint = Theme.label("Click \"+ Add\" to save your first password.", Theme.BODY, Theme.MUTED);
+
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        JLabel icon = new JLabel(new ImageIcon(Theme.lockIcon(72)));
+        JLabel title = Theme.label("No passwords saved yet", Theme.TITLE.deriveFont(20f), Theme.TEXT);
+        JLabel hint = Theme.label("<html><center>Add your first password. It is encrypted and "
+                + "stored only on this computer.</center></html>", Theme.BODY, Theme.MUTED);
         hint.setHorizontalAlignment(SwingConstants.CENTER);
-        hint.setVerticalAlignment(SwingConstants.TOP);
-        panel.add(title, BorderLayout.CENTER);
-        panel.add(hint, BorderLayout.SOUTH);
-        hint.setPreferredSize(new Dimension(10, 200));
+        JButton add = addButton();
+
+        for (JComponent c : new JComponent[]{icon, title, hint, add}) {
+            c.setAlignmentX(CENTER_ALIGNMENT);
+        }
+        content.add(icon);
+        content.add(Box.createVerticalStrut(14));
+        content.add(title);
+        content.add(Box.createVerticalStrut(6));
+        content.add(hint);
+        content.add(Box.createVerticalStrut(18));
+        content.add(add);
+        panel.add(content);
+        return panel;
+    }
+
+    private JComponent buildNoResultsState() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(Theme.SURFACE);
+        panel.setBorder(BorderFactory.createLineBorder(Theme.BORDER));
+
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        JLabel title = Theme.label("No passwords match", Theme.HEADING, Theme.TEXT);
+        JLabel hint = Theme.label("Try a different search or category.", Theme.BODY, Theme.MUTED);
+        JButton clear = Theme.secondaryButton("Clear filters");
+        clear.addActionListener(e -> clearFilters());
+        for (JComponent c : new JComponent[]{title, hint, clear}) {
+            c.setAlignmentX(CENTER_ALIGNMENT);
+        }
+        content.add(title);
+        content.add(Box.createVerticalStrut(6));
+        content.add(hint);
+        content.add(Box.createVerticalStrut(14));
+        content.add(clear);
+        panel.add(content);
         return panel;
     }
 
@@ -290,39 +311,13 @@ public class DashboardFrame extends BaseFrame {
         return bar;
     }
 
-    /** Table cells with a little space on the left and right (and an optional fixed font). */
-    private static class PaddedRenderer extends DefaultTableCellRenderer {
-        private static final long serialVersionUID = 1L;
-        private final Font fixedFont;
-
-        PaddedRenderer() {
-            this(null);
-        }
-
-        PaddedRenderer(Font fixedFont) {
-            this.fixedFont = fixedFont;
-        }
-
-        @Override
-        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected,
-                                                       boolean focused, int row, int column) {
-            super.getTableCellRendererComponent(table, value, selected, focused, row, column);
-            if (fixedFont != null) {
-                setFont(fixedFont);
-            }
-            setBorder(Theme.padding(0, 8, 0, 8));
-            return this;
-        }
-    }
-
     // =====================================================================
-    // Event handling: shortcuts, mouse, auto-lock
+    // Event handling: shortcuts, keyboard navigation, auto-lock
     // =====================================================================
 
     private void installEventHandlers() {
         int ctrl = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
-        // Keyboard shortcuts (also shown next to the menu items)
         setShortcut(addAction, KeyStroke.getKeyStroke(KeyEvent.VK_N, ctrl));
         setShortcut(editAction, KeyStroke.getKeyStroke(KeyEvent.VK_E, ctrl));
         setShortcut(deleteAction, KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0));
@@ -334,65 +329,19 @@ public class DashboardFrame extends BaseFrame {
         setShortcut(exitAction, KeyStroke.getKeyStroke(KeyEvent.VK_Q, ctrl));
         setShortcut(aboutAction, KeyStroke.getKeyStroke(KeyEvent.VK_F1, 0));
 
-        // Enter on a row opens it; Ctrl+C in the table copies the password
-        table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "editRow");
-        table.getActionMap().put("editRow", editAction);
-        table.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_C, ctrl), "copyPassword");
-        table.getActionMap().put("copyPassword", copyPasswordAction);
+        // Keyboard navigation inside the list
+        bindList(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "next", e -> moveSelection(1));
+        bindList(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "previous", e -> moveSelection(-1));
+        bindList(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "open", e -> editSelected());
+        bindList(KeyStroke.getKeyStroke(KeyEvent.VK_C, ctrl), "copyPassword", e -> copySelected(true));
 
-        // Escape in the search box clears it
-        searchField.getInputMap(JComponent.WHEN_FOCUSED)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "clearSearch");
-        searchField.getActionMap().put("clearSearch", action("Clear", e -> searchField.setText("")));
-
-        // Down arrow in the search box jumps into the table
-        searchField.getInputMap(JComponent.WHEN_FOCUSED)
-                .put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "toTable");
-        searchField.getActionMap().put("toTable", action("To table", e -> {
-            if (table.getRowCount() > 0) {
-                table.requestFocusInWindow();
-                if (table.getSelectedRow() < 0) {
-                    table.setRowSelectionInterval(0, 0);
-                }
-            }
-        }));
-
-        // Mouse: double-click edits, right-click shows a menu
-        JPopupMenu popup = new JPopupMenu();
-        popup.add(copyUserAction);
-        popup.add(copyPasswordAction);
-        popup.addSeparator();
-        popup.add(editAction);
-        popup.add(deleteAction);
-
-        table.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2 && e.getButton() == MouseEvent.BUTTON1
-                        && table.rowAtPoint(e.getPoint()) >= 0) {
-                    editSelected();
-                }
-            }
-
-            @Override
-            public void mousePressed(MouseEvent e) {
-                showPopup(e);
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                showPopup(e);
-            }
-
-            private void showPopup(MouseEvent e) {
-                if (!e.isPopupTrigger()) {
-                    return;
-                }
-                int row = table.rowAtPoint(e.getPoint());
-                if (row >= 0) {
-                    table.setRowSelectionInterval(row, row);
-                    popup.show(table, e.getX(), e.getY());
+        // Search box: Escape clears it, Down arrow jumps into the list
+        bindSearch(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "clearSearch", e -> searchField.setText(""));
+        bindSearch(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "toList", e -> {
+            if (!cards.isEmpty()) {
+                listPanel.requestFocusInWindow();
+                if (selectedId == null) {
+                    select(cards.get(0).getCredential());
                 }
             }
         });
@@ -406,6 +355,16 @@ public class DashboardFrame extends BaseFrame {
         });
     }
 
+    private void bindList(KeyStroke key, String name, Consumer<ActionEvent> handler) {
+        listPanel.getInputMap(JComponent.WHEN_FOCUSED).put(key, name);
+        listPanel.getActionMap().put(name, action(name, handler));
+    }
+
+    private void bindSearch(KeyStroke key, String name, Consumer<ActionEvent> handler) {
+        searchField.getInputMap(JComponent.WHEN_FOCUSED).put(key, name);
+        searchField.getActionMap().put(name, action(name, handler));
+    }
+
     private void setShortcut(Action action, KeyStroke key) {
         action.putValue(Action.ACCELERATOR_KEY, key);
         getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(key, action.getValue(Action.NAME));
@@ -414,80 +373,153 @@ public class DashboardFrame extends BaseFrame {
 
     /** Called by the AutoLockManager after the idle time. */
     private void autoLockNow() {
-        // close any open dialog first so nothing stays on screen
         for (java.awt.Window w : getOwnedWindows()) {
-            w.dispose();
+            w.dispose();   // close any open dialog first so nothing stays on screen
         }
         controller.lock();
     }
 
+    /** What happens when the user uses a card. */
+    private final transient CredentialCard.Listener cardListener = new CredentialCard.Listener() {
+        @Override
+        public void onSelect(Credential credential) {
+            select(credential);
+            listPanel.requestFocusInWindow();
+        }
+
+        @Override
+        public void onOpen(Credential credential) {
+            editSelected();
+        }
+
+        @Override
+        public void onCopyPassword(Credential credential) {
+            copySelected(true);
+        }
+
+        @Override
+        public void onShowMenu(CredentialCard card, Component invoker, int x, int y) {
+            buildCardMenu(card).show(invoker, x, y);
+        }
+    };
+
+    private JPopupMenu buildCardMenu(CredentialCard card) {
+        Credential c = card.getCredential();
+        JPopupMenu menu = new JPopupMenu();
+
+        menu.add(menuItem("Copy username", e -> copySelected(false)));
+        menu.add(menuItem("Copy password", e -> copySelected(true)));
+        menu.add(menuItem(card.isRevealed() ? "Hide password" : "Show password",
+                e -> card.setRevealed(!card.isRevealed())));
+
+        JMenuItem open = menuItem("Open website", e -> openWebsite(c));
+        open.setEnabled(InputValidator.toWebAddress(c.getWebsite()) != null
+                && Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE));
+        menu.add(open);
+
+        menu.addSeparator();
+        menu.add(menuItem("Edit", e -> editSelected()));
+        JMenuItem delete = menuItem("Delete", e -> deleteSelected());
+        delete.setForeground(Theme.DANGER);
+        menu.add(delete);
+        return menu;
+    }
+
+    private static JMenuItem menuItem(String text, Consumer<ActionEvent> handler) {
+        JMenuItem item = new JMenuItem(text);
+        item.addActionListener(handler::accept);
+        return item;
+    }
+
     // =====================================================================
-    // Refreshing
+    // Showing the data
     // =====================================================================
 
-    /** Reloads the table from the vault and re-selects the given entry (if any). */
-    protected void refreshTable(String selectId) {
-        tableModel.setCredentials(vault.getAll());
-        refreshCategories();
-        applyFilter();
-
-        boolean empty = vault.count() == 0;
-        ((CardLayout) centerCards.getLayout()).show(centerCards, empty ? CARD_EMPTY : CARD_TABLE);
-        header.setSubtitle("Signed in as " + session.getUser().getUsername());
-
+    /** Re-reads the vault, recomputes the security report and redraws everything. */
+    protected void refresh(String selectId) {
         if (selectId != null) {
-            int modelRow = tableModel.indexOf(selectId);
-            if (modelRow >= 0) {
-                int viewRow = table.convertRowIndexToView(modelRow);
-                if (viewRow >= 0) {
-                    table.setRowSelectionInterval(viewRow, viewRow);
-                    table.scrollRectToVisible(table.getCellRect(viewRow, 0, true));
-                }
-            }
+            selectedId = selectId;
         }
-        updateActionStates();
+        report = analyzer.analyze(vault.getAll());
+        if (!report.hasIssues()) {
+            reviewing = false;
+        }
+        rebuildChips();
+        renderList();
+        scrollToSelected();
     }
 
-    private void refreshCategories() {
-        Object selected = categoryFilter.getSelectedItem();
-        categoryFilter.removeAllItems();
-        categoryFilter.addItem(ALL_CATEGORIES);
-        for (String category : vault.getCategories()) {
-            categoryFilter.addItem(category);
-        }
-        categoryFilter.setSelectedItem(selected != null ? selected : ALL_CATEGORIES);
-    }
-
-    /** Filters the table by the search text and the selected category. */
-    private void applyFilter() {
-        String text = searchField.getText();
-        Object category = categoryFilter.getSelectedItem();
-        List<RowFilter<CredentialTableModel, Integer>> filters = new ArrayList<>();
-
-        filters.add(new RowFilter<CredentialTableModel, Integer>() {
-            @Override
-            public boolean include(Entry<? extends CredentialTableModel, ? extends Integer> entry) {
-                return entry.getModel().getCredentialAt(entry.getIdentifier()).matches(text);
+    private void rebuildChips() {
+        List<String> used = new ArrayList<>();
+        for (Credential c : vault.getAll()) {
+            if (used.stream().noneMatch(u -> u.equalsIgnoreCase(c.getCategory()))) {
+                used.add(c.getCategory());
             }
-        });
-        if (category != null && !ALL_CATEGORIES.equals(category)) {
-            filters.add(new RowFilter<CredentialTableModel, Integer>() {
-                @Override
-                public boolean include(Entry<? extends CredentialTableModel, ? extends Integer> entry) {
-                    return entry.getModel().getCredentialAt(entry.getIdentifier())
-                            .getCategory().equalsIgnoreCase(category.toString());
-                }
+        }
+        used.sort(String.CASE_INSENSITIVE_ORDER);
+        if (!ALL.equals(categoryFilter) && used.stream().noneMatch(u -> u.equalsIgnoreCase(categoryFilter))) {
+            categoryFilter = ALL;   // that category no longer exists
+        }
+
+        chipsRow.removeAll();
+        ButtonGroup group = new ButtonGroup();
+        List<String> names = new ArrayList<>();
+        names.add(ALL);
+        names.addAll(used);
+        for (String name : names) {
+            FilterChip chip = new FilterChip(name);
+            chip.setSelected(name.equalsIgnoreCase(categoryFilter));
+            chip.addActionListener(e -> {
+                categoryFilter = name;
+                renderList();
             });
+            group.add(chip);
+            chipsRow.add(chip);
         }
-        sorter.setRowFilter(RowFilter.andFilter(filters));
-        updateCount();
+        chipsRow.setVisible(!used.isEmpty());
+        chipsRow.revalidate();
+        chipsRow.repaint();
+    }
+
+    /** Draws the cards that match the search, category and review filters. */
+    protected void renderList() {
+        String search = searchField.getText();
+        List<Credential> shown = new ArrayList<>();
+        for (Credential c : vault.getAll()) {
+            boolean categoryOk = ALL.equals(categoryFilter) || c.getCategory().equalsIgnoreCase(categoryFilter);
+            boolean reviewOk = !reviewing || report.needsAttention(c.getId());
+            if (categoryOk && reviewOk && c.matches(search)) {
+                shown.add(c);
+            }
+        }
+
+        if (selectedId != null && shown.stream().noneMatch(c -> c.getId().equals(selectedId))) {
+            selectedId = null;
+        }
+
+        listPanel.removeAll();
+        cards.clear();
+        for (Credential c : shown) {
+            CredentialCard card = new CredentialCard(c, report.isWeak(c.getId()), report.isReused(c.getId()),
+                    cardListener);
+            card.setSelected(c.getId().equals(selectedId));
+            cards.add(card);
+            listPanel.add(card);
+        }
+        listPanel.revalidate();
+        listPanel.repaint();
+
+        String view = vault.count() == 0 ? VIEW_EMPTY : (shown.isEmpty() ? VIEW_NO_RESULTS : VIEW_LIST);
+        ((CardLayout) views.getLayout()).show(views, view);
+
+        banner.update(report, reviewing);
+        updateCount(shown.size());
         updateActionStates();
     }
 
-    private void updateCount() {
-        int shown = table.getRowCount();
+    private void updateCount(int shown) {
         int total = vault.count();
-        String noun = total == 1 ? " entry" : " entries";
+        String noun = total == 1 ? " password" : " passwords";
         countLabel.setText(shown == total ? total + noun : shown + " of " + total + noun);
     }
 
@@ -499,12 +531,62 @@ public class DashboardFrame extends BaseFrame {
         copyPasswordAction.setEnabled(selected);
     }
 
+    private void select(Credential credential) {
+        selectedId = credential == null ? null : credential.getId();
+        for (CredentialCard card : cards) {
+            card.setSelected(card.getCredential().getId().equals(selectedId));
+        }
+        updateActionStates();
+    }
+
+    private void moveSelection(int step) {
+        if (cards.isEmpty()) {
+            return;
+        }
+        int index = -1;
+        for (int i = 0; i < cards.size(); i++) {
+            if (cards.get(i).getCredential().getId().equals(selectedId)) {
+                index = i;
+            }
+        }
+        int next = Math.max(0, Math.min(cards.size() - 1, index + step));
+        select(cards.get(next).getCredential());
+        scrollToSelected();
+    }
+
+    private void scrollToSelected() {
+        SwingUtilities.invokeLater(() -> {
+            for (CredentialCard card : cards) {
+                if (card.getCredential().getId().equals(selectedId)) {
+                    listPanel.scrollRectToVisible(card.getBounds());
+                }
+            }
+        });
+    }
+
     protected Credential getSelectedCredential() {
-        int viewRow = table.getSelectedRow();
-        if (viewRow < 0) {
+        if (selectedId == null) {
             return null;
         }
-        return tableModel.getCredentialAt(table.convertRowIndexToModel(viewRow));
+        return vault.findById(selectedId).orElse(null);
+    }
+
+    private void toggleReview() {
+        reviewing = !reviewing;
+        if (reviewing) {
+            searchField.setText("");
+            categoryFilter = ALL;
+            rebuildChips();
+        }
+        renderList();
+    }
+
+    private void clearFilters() {
+        reviewing = false;
+        categoryFilter = ALL;
+        searchField.setText("");
+        rebuildChips();
+        renderList();
     }
 
     protected void setStatus(String text, Color color) {
@@ -524,8 +606,9 @@ public class DashboardFrame extends BaseFrame {
                 vault.getCategories(AppConfig.DEFAULT_CATEGORIES));
         dialog.setVisible(true);
         if (dialog.getSaved() != null) {
-            refreshTable(dialog.getSaved().getId());
-            setStatus("Added " + dialog.getSaved().getWebsite(), Theme.SUCCESS);
+            clearFilters();
+            refresh(dialog.getSaved().getId());
+            setStatus("Saved " + dialog.getSaved().getWebsite(), Theme.SUCCESS);
         }
     }
 
@@ -538,7 +621,7 @@ public class DashboardFrame extends BaseFrame {
                 vault.getCategories(AppConfig.DEFAULT_CATEGORIES));
         dialog.setVisible(true);
         if (dialog.getSaved() != null) {
-            refreshTable(dialog.getSaved().getId());
+            refresh(dialog.getSaved().getId());
             setStatus("Saved changes to " + dialog.getSaved().getWebsite(), Theme.SUCCESS);
         }
     }
@@ -548,13 +631,14 @@ public class DashboardFrame extends BaseFrame {
         if (selected == null) {
             return;
         }
-        if (!confirm("Delete the entry for " + selected.getDisplayName() + "?\nThis cannot be undone.",
-                "Delete Entry")) {
+        if (!confirm("Delete the password for " + selected.getDisplayName() + "?\nThis cannot be undone.",
+                "Delete Password")) {
             return;
         }
         try {
             vault.delete(selected.getId());
-            refreshTable(null);
+            selectedId = null;
+            refresh(null);
             setStatus("Deleted " + selected.getWebsite(), Theme.SUCCESS);
         } catch (VaultException e) {
             ErrorHandler.show(this, "Delete", e);
@@ -567,13 +651,25 @@ public class DashboardFrame extends BaseFrame {
             return;
         }
         String text = password ? selected.getPassword() : selected.getUsername();
-        copyToClipboard(text, (password ? "Password" : "Username") + " for " + selected.getWebsite()
-                + " copied to clipboard");
+        copyToClipboard(text, (password ? "Password" : "Username") + " for " + selected.getWebsite() + " copied");
     }
 
     protected void copyToClipboard(String text, String message) {
         clipboard.copy(text);
-        setStatus(message + " (clears in " + AppConfig.CLIPBOARD_CLEAR_SECONDS + "s)", Theme.SUCCESS);
+        setStatus(message + " - clears in " + AppConfig.CLIPBOARD_CLEAR_SECONDS + " seconds", Theme.SUCCESS);
+    }
+
+    private void openWebsite(Credential credential) {
+        String address = InputValidator.toWebAddress(credential.getWebsite());
+        if (address == null) {
+            return;
+        }
+        try {
+            Desktop.getDesktop().browse(new URI(address));
+            setStatus("Opened " + credential.getWebsite() + " in your browser", Theme.SUCCESS);
+        } catch (Exception e) {
+            ErrorHandler.show(this, "Open website", e);
+        }
     }
 
     protected void openGenerator() {
