@@ -1,14 +1,20 @@
 package com.securevault;
 
-import com.securevault.config.AppConfig;
+import com.securevault.storage.FileStorageService;
+import com.securevault.ui.AppController;
+import com.securevault.ui.Theme;
+
+import javax.swing.SwingUtilities;
 
 /**
- * Entry point of the application.
+ * Entry point: applies the theme and opens the first window.
  */
 public class Main {
 
     public static void main(String[] args) {
-        System.out.println(AppConfig.APP_NAME + " v" + AppConfig.APP_VERSION);
-        System.out.println("Data folder: " + AppConfig.DATA_FOLDER);
+        SwingUtilities.invokeLater(() -> {
+            Theme.install();
+            new AppController(new FileStorageService()).start();
+        });
     }
 }
