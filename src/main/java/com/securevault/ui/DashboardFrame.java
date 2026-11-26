@@ -10,6 +10,7 @@ import com.securevault.ui.components.SearchField;
 import com.securevault.ui.dialogs.ChangePasswordDialog;
 import com.securevault.ui.dialogs.CredentialDialog;
 import com.securevault.ui.dialogs.PasswordGeneratorDialog;
+import com.securevault.util.ClipboardManager;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
@@ -20,10 +21,12 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
+import javax.swing.JPopupMenu;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JToggleButton;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
 import javax.swing.SwingConstants;
@@ -39,8 +42,13 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Toolkit;
-import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -83,6 +91,8 @@ public class DashboardFrame extends BaseFrame {
     private final JLabel countLabel = Theme.label("", Theme.SMALL, Theme.MUTED);
     private final JLabel statusLabel = Theme.label(" ", Theme.SMALL, Theme.SUCCESS);
     private final Timer statusResetTimer = new Timer(4000, e -> setStatus(" ", Theme.SUCCESS));
+    private final transient ClipboardManager clipboard = new ClipboardManager();
+    private final transient AutoLockManager autoLock;
 
     // ---------- Actions (shared by buttons and menus) ----------
     protected final Action addAction = action("Add", e -> addEntry());
@@ -102,12 +112,15 @@ public class DashboardFrame extends BaseFrame {
         this.session = session;
         this.vault = vault;
         this.header = new HeaderPanel(AppConfig.APP_NAME, "");
+        this.autoLock = new AutoLockManager(AppConfig.AUTO_LOCK_MINUTES, this::autoLockNow);
         statusResetTimer.setRepeats(false);
 
         buildUI();
         setJMenuBar(buildMenuBar());
+        installEventHandlers();
         refreshTable(null);
         finishSetup(new Dimension(960, 600));
+        autoLock.start();
     }
 
     private static Action action(String name, java.util.function.Consumer<ActionEvent> handler) {
@@ -297,6 +310,112 @@ public class DashboardFrame extends BaseFrame {
     }
 
     // =====================================================================
+    // Event handling: shortcuts, mouse, auto-lock
+    // =====================================================================
+
+    private void installEventHandlers() {
+        int ctrl = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+
+        // Keyboard shortcuts (also shown next to the menu items)
+        setShortcut(addAction, KeyStroke.getKeyStroke(KeyEvent.VK_N, ctrl));
+        setShortcut(editAction, KeyStroke.getKeyStroke(KeyEvent.VK_E, ctrl));
+        setShortcut(deleteAction, KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0));
+        setShortcut(copyUserAction, KeyStroke.getKeyStroke(KeyEvent.VK_B, ctrl));
+        setShortcut(copyPasswordAction, KeyStroke.getKeyStroke(KeyEvent.VK_C, ctrl | InputEvent.SHIFT_DOWN_MASK));
+        setShortcut(focusSearchAction, KeyStroke.getKeyStroke(KeyEvent.VK_F, ctrl));
+        setShortcut(generatorAction, KeyStroke.getKeyStroke(KeyEvent.VK_G, ctrl));
+        setShortcut(lockAction, KeyStroke.getKeyStroke(KeyEvent.VK_L, ctrl));
+        setShortcut(exitAction, KeyStroke.getKeyStroke(KeyEvent.VK_Q, ctrl));
+        setShortcut(aboutAction, KeyStroke.getKeyStroke(KeyEvent.VK_F1, 0));
+
+        // Enter on a row opens it; Ctrl+C in the table copies the password
+        table.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "editRow");
+        table.getActionMap().put("editRow", editAction);
+        table.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_C, ctrl), "copyPassword");
+        table.getActionMap().put("copyPassword", copyPasswordAction);
+
+        // Escape in the search box clears it
+        searchField.getInputMap(JComponent.WHEN_FOCUSED)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "clearSearch");
+        searchField.getActionMap().put("clearSearch", action("Clear", e -> searchField.setText("")));
+
+        // Down arrow in the search box jumps into the table
+        searchField.getInputMap(JComponent.WHEN_FOCUSED)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "toTable");
+        searchField.getActionMap().put("toTable", action("To table", e -> {
+            if (table.getRowCount() > 0) {
+                table.requestFocusInWindow();
+                if (table.getSelectedRow() < 0) {
+                    table.setRowSelectionInterval(0, 0);
+                }
+            }
+        }));
+
+        // Mouse: double-click edits, right-click shows a menu
+        JPopupMenu popup = new JPopupMenu();
+        popup.add(copyUserAction);
+        popup.add(copyPasswordAction);
+        popup.addSeparator();
+        popup.add(editAction);
+        popup.add(deleteAction);
+
+        table.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && e.getButton() == MouseEvent.BUTTON1
+                        && table.rowAtPoint(e.getPoint()) >= 0) {
+                    editSelected();
+                }
+            }
+
+            @Override
+            public void mousePressed(MouseEvent e) {
+                showPopup(e);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                showPopup(e);
+            }
+
+            private void showPopup(MouseEvent e) {
+                if (!e.isPopupTrigger()) {
+                    return;
+                }
+                int row = table.rowAtPoint(e.getPoint());
+                if (row >= 0) {
+                    table.setRowSelectionInterval(row, row);
+                    popup.show(table, e.getX(), e.getY());
+                }
+            }
+        });
+
+        // Clear the clipboard when the window is minimised
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowIconified(WindowEvent e) {
+                clipboard.clearIfUnchanged();
+            }
+        });
+    }
+
+    private void setShortcut(Action action, KeyStroke key) {
+        action.putValue(Action.ACCELERATOR_KEY, key);
+        getRootPane().getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(key, action.getValue(Action.NAME));
+        getRootPane().getActionMap().put(action.getValue(Action.NAME), action);
+    }
+
+    /** Called by the AutoLockManager after the idle time. */
+    private void autoLockNow() {
+        // close any open dialog first so nothing stays on screen
+        for (java.awt.Window w : getOwnedWindows()) {
+            w.dispose();
+        }
+        controller.lock();
+    }
+
+    // =====================================================================
     // Refreshing
     // =====================================================================
 
@@ -447,8 +566,8 @@ public class DashboardFrame extends BaseFrame {
     }
 
     protected void copyToClipboard(String text, String message) {
-        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
-        setStatus(message, Theme.SUCCESS);
+        clipboard.copy(text);
+        setStatus(message + " (clears in " + AppConfig.CLIPBOARD_CLEAR_SECONDS + "s)", Theme.SUCCESS);
     }
 
     protected void openGenerator() {
@@ -475,6 +594,8 @@ public class DashboardFrame extends BaseFrame {
     @Override
     public void dispose() {
         statusResetTimer.stop();
+        autoLock.stop();
+        clipboard.clearIfUnchanged();
         super.dispose();
     }
 }
