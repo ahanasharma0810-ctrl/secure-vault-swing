@@ -9,7 +9,8 @@ with **AES-256** using a key derived from a single master password.
 ## Features
 
 - **Master account**: register once, then unlock with your master password
-- **Lock-out protection**: 3 wrong attempts block login for 30 seconds
+- **Friendly login screen**: greets you by name, so you only type your password; warns when Caps Lock is on and shows progress while unlocking
+- **Lock-out protection**: 3 wrong attempts block login for 30 seconds, with a countdown bar
 - **Clean dashboard**: every password is a card with a coloured site icon and a one-click **Copy password** button
 - **Category chips**: filter with one click (All, Email, Social, Banking, ...)
 - **Security check**: a banner tells you about weak or reused passwords; **Review** shows just those
@@ -123,7 +124,7 @@ To start over, close the app and delete this folder.
 | **Inheritance** | `Credential`/`User` extend `BaseEntity`; frames extend `BaseFrame`; dialogs extend `BaseDialog`; exceptions extend `VaultException` |
 | **Polymorphism** | `AESEncryptionService` and `FileStorageService` are used through their interfaces; `getDisplayName()` is overridden; one `Action` drives a button, a menu item and a shortcut |
 | **Composition** | `VaultService` *has a* `StorageService` and an `EncryptionService` |
-| **Custom components** | `CredentialCard`, `SiteAvatar`, `FilterChip`, `Tag`, `SecurityBanner`, `PasswordStrengthBar`, `PasswordInput`, `SearchField`, `HeaderPanel` |
+| **Custom components** | `WelcomePanel`, `CredentialCard`, `SiteAvatar`, `FilterChip`, `Tag`, `SecurityBanner`, `PasswordStrengthBar`, `PasswordInput`, `SearchField`, `HeaderPanel` |
 | **Interfaces for callbacks** | `CredentialCard.Listener` lets a card tell the dashboard what happened without knowing about it |
 
 ### Class overview
@@ -195,7 +196,7 @@ src/test/java/                 JUnit 5 tests
 mvn test
 ```
 
-103 JUnit tests cover the models, hashing, encryption, the password generator,
+105 JUnit tests cover the models, hashing, encryption, the password generator,
 file storage, login and lock-out, vault operations, backup recovery and the security check.
 
 ## Development branches
@@ -214,3 +215,4 @@ file storage, login and lock-out, vault operations, backup recovery and the secu
 | `unit-tests` | JUnit test suite |
 | `packaging-release` | Build scripts, runnable JAR, documentation |
 | `dashboard` | Card-based dashboard, category chips, security check banner |
+| `login-screen` | Two-panel login screen with greeting, Caps Lock warning and progress bar |
