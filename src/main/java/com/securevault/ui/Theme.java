@@ -67,6 +67,7 @@ public final class Theme {
         UIManager.put("nimbusBase", PRIMARY_DARK);
         UIManager.put("nimbusFocus", PRIMARY);
         UIManager.put("nimbusSelectionBackground", PRIMARY);
+        UIManager.put("nimbusOrange", PRIMARY);   // progress bars in our blue
         UIManager.put("control", BACKGROUND);
         UIManager.put("defaultFont", BODY);
         try {
