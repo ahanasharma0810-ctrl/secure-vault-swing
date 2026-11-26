@@ -1,0 +1,27 @@
+# Compiled output
+out/
+target/
+build/
+*.class
+
+# Packaged files
+*.jar
+!lib/*.jar
+*.bundle
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+nbproject/
+bin/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
