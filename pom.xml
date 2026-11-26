@@ -55,6 +55,7 @@
                     <archive>
                         <manifest>
                             <mainClass>com.securevault.Main</mainClass>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
                         </manifest>
                     </archive>
                 </configuration>
