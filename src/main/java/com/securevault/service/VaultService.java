@@ -1,11 +1,15 @@
 package com.securevault.service;
 
+import com.securevault.exception.CryptoException;
+import com.securevault.exception.StorageException;
 import com.securevault.exception.ValidationException;
 import com.securevault.exception.VaultException;
 import com.securevault.model.Credential;
 import com.securevault.security.EncryptionService;
 import com.securevault.storage.CredentialSerializer;
 import com.securevault.storage.StorageService;
+import com.securevault.util.AppLogger;
+import com.securevault.util.InputValidator;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -26,20 +30,48 @@ public class VaultService {
     private final CredentialSerializer serializer = new CredentialSerializer();
     private EncryptionService encryption;
     private final List<Credential> credentials = new ArrayList<>();
+    private boolean recoveredFromBackup = false;
 
     public VaultService(StorageService storage, EncryptionService encryption) {
         this.storage = storage;
         this.encryption = encryption;
     }
 
-    /** Reads and decrypts the vault from storage. */
+    /**
+     * Reads and decrypts the vault from storage. If the vault file is damaged,
+     * the backup copy is tried before giving up.
+     */
     public void load() throws VaultException {
         credentials.clear();
-        byte[] encrypted = storage.loadVault();
-        if (encrypted != null) {
-            byte[] plain = encryption.decrypt(encrypted);
-            credentials.addAll(serializer.fromBytes(plain));
+        recoveredFromBackup = false;
+        try {
+            credentials.addAll(decode(storage.loadVault()));
+        } catch (CryptoException | StorageException mainError) {
+            AppLogger.warn("Vault file unreadable, trying backup: " + mainError.getMessage());
+            byte[] backup = storage.loadVaultBackup();
+            if (backup == null) {
+                throw mainError;
+            }
+            try {
+                credentials.addAll(decode(backup));
+            } catch (VaultException backupError) {
+                throw mainError;
+            }
+            recoveredFromBackup = true;
+            save();   // write the recovered data back as the main file
         }
+    }
+
+    private List<Credential> decode(byte[] encrypted) throws VaultException {
+        if (encrypted == null) {
+            return new ArrayList<>();
+        }
+        return serializer.fromBytes(encryption.decrypt(encrypted));
+    }
+
+    /** True if the last load had to use the backup because the vault was damaged. */
+    public boolean wasRecoveredFromBackup() {
+        return recoveredFromBackup;
     }
 
     // ---------------- Reading ----------------
@@ -64,6 +96,17 @@ public class VaultService {
         return credentials.size();
     }
 
+    /** How many other entries already use this password (to warn about reuse). */
+    public int countPasswordReuse(String password, String ignoreId) {
+        int count = 0;
+        for (Credential c : credentials) {
+            if (!c.getId().equals(ignoreId) && c.getPassword().equals(password)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     /** Categories in use, merged with the given defaults, sorted. */
     public List<String> getCategories(String... defaults) {
         TreeSet<String> set = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
@@ -76,7 +119,8 @@ public class VaultService {
 
     public Credential add(String website, String username, String password,
                           String category, String notes) throws VaultException {
-        Credential credential = new Credential(website, username, password, category, notes);
+        Credential credential = new Credential(InputValidator.normalizeWebsite(website),
+                InputValidator.singleLine(username), password, category, notes);
         ensureNotDuplicate(credential, null);
         credentials.add(credential);
         try {
@@ -92,7 +136,8 @@ public class VaultService {
                              String category, String notes) throws VaultException {
         Credential old = findById(id)
                 .orElseThrow(() -> new ValidationException("This entry no longer exists"));
-        Credential updated = new Credential(id, old.getCreatedAt(), website, username, password, category, notes);
+        Credential updated = new Credential(id, old.getCreatedAt(), InputValidator.normalizeWebsite(website),
+                InputValidator.singleLine(username), password, category, notes);
         ensureNotDuplicate(updated, id);
 
         int index = credentials.indexOf(old);
