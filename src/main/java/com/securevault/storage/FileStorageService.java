@@ -32,6 +32,7 @@ public class FileStorageService implements StorageService {
     private final Path folder;
     private final Path userFile;
     private final Path vaultFile;
+    private final Path backupFile;
 
     public FileStorageService() {
         this(Paths.get(AppConfig.DATA_FOLDER));
@@ -41,6 +42,7 @@ public class FileStorageService implements StorageService {
         this.folder = folder;
         this.userFile = folder.resolve(AppConfig.USER_FILE_NAME);
         this.vaultFile = folder.resolve(AppConfig.VAULT_FILE_NAME);
+        this.backupFile = folder.resolve(AppConfig.VAULT_FILE_NAME + ".bak");
     }
 
     public Path getFolder() {
@@ -68,6 +70,7 @@ public class FileStorageService implements StorageService {
         try (OutputStream out = Files.newOutputStream(temp)) {
             props.store(out, AppConfig.APP_NAME + " account - do not edit");
         } catch (IOException e) {
+            deleteQuietly(temp);
             throw new StorageException("Could not save the account", e);
         }
         moveIntoPlace(temp, userFile);
@@ -109,10 +112,27 @@ public class FileStorageService implements StorageService {
         Path temp = prepareTempFile(vaultFile);
         try {
             Files.write(temp, content);
+            if (Files.isRegularFile(vaultFile)) {
+                // keep the last good copy in case the new one gets damaged later
+                Files.copy(vaultFile, backupFile, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
+            deleteQuietly(temp);
             throw new StorageException("Could not save the vault", e);
         }
         moveIntoPlace(temp, vaultFile);
+    }
+
+    @Override
+    public byte[] loadVaultBackup() throws StorageException {
+        if (!Files.isRegularFile(backupFile)) {
+            return null;
+        }
+        try {
+            return stripMagic(Files.readAllBytes(backupFile));
+        } catch (IOException e) {
+            throw new StorageException("Could not read the vault backup", e);
+        }
     }
 
     @Override
@@ -154,12 +174,16 @@ public class FileStorageService implements StorageService {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
-            try {
-                Files.deleteIfExists(temp);
-            } catch (IOException ignored) {
-                // nothing more we can do
-            }
+            deleteQuietly(temp);
             throw new StorageException("Could not finish saving " + target.getFileName(), e);
+        }
+    }
+
+    private static void deleteQuietly(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // nothing more we can do
         }
     }
 }

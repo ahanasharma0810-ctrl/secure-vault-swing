@@ -23,4 +23,12 @@ public interface StorageService {
     void saveVault(byte[] encryptedVault) throws StorageException;
 
     byte[] loadVault() throws StorageException;
+
+    /**
+     * The previous copy of the vault, kept in case the current one is damaged.
+     * Implementations without backups simply return null.
+     */
+    default byte[] loadVaultBackup() throws StorageException {
+        return null;
+    }
 }

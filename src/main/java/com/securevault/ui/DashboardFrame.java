@@ -121,6 +121,12 @@ public class DashboardFrame extends BaseFrame {
         refreshTable(null);
         finishSetup(new Dimension(960, 600));
         autoLock.start();
+
+        if (vault.wasRecoveredFromBackup()) {
+            javax.swing.SwingUtilities.invokeLater(() -> showInfo(
+                    "Your vault file was damaged, so it was restored from the automatic backup.\n"
+                    + "Changes made after the last successful save may be missing."));
+        }
     }
 
     private static Action action(String name, java.util.function.Consumer<ActionEvent> handler) {
@@ -551,7 +557,7 @@ public class DashboardFrame extends BaseFrame {
             refreshTable(null);
             setStatus("Deleted " + selected.getWebsite(), Theme.SUCCESS);
         } catch (VaultException e) {
-            showError("Could not delete the entry:\n" + e.getMessage());
+            ErrorHandler.show(this, "Delete", e);
         }
     }
 
